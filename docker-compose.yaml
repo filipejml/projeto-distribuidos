@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # INFRAESTRUTURA: Bancos de Dados e Broker
+  # ==========================================
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq_broker
+    ports:
+      - "5672:5672"   # Porta de comunicação AMQP
+      - "15672:15672" # Painel de gerenciamento Web (Dashboard)
+    networks:
+      - uespi_network
+
+  estoque_db:
+    image: postgres:15-alpine
+    container_name: estoque_db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: estoque
+    ports:
+      - "5434:5432"
+    networks:
+      - uespi_network
+    volumes:
+      - ./estoque/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  pedidos_db:
+    image: postgres:15-alpine
+    container_name: pedidos_db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: pedidos
+    ports:
+      - "5433:5432" # Exposto em porta diferente no host
+    networks:
+      - uespi_network
+
+  # ==========================================
+  # MICROSSERVIÇOS (Node.js)
+  # ==========================================
+  gateway:
+    build: ./gateway
+    container_name: gateway_api
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - ESTOQUE_URL=http://estoque:3001
+      - PEDIDOS_URL=http://pedidos:3002
+    networks:
+      - uespi_network
+    depends_on:
+      - estoque
+      - pedidos
+
+  estoque:
+    build: ./estoque
+    container_name: servico_estoque
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - DB_HOST=estoque_db
+      - DB_USER=admin
+      - DB_PASSWORD=password
+      - DB_NAME=estoque
+    networks:
+      - uespi_network
+    depends_on:
+      - estoque_db
+
+  pedidos:
+    build: ./pedidos
+    container_name: servico_pedidos
+    ports:
+      - "3002:3002"
+    environment:
+      - PORT=3002
+      - DB_HOST=pedidos_db
+      - DB_USER=admin
+      - DB_PASSWORD=password
+      - DB_NAME=pedidos
+      - RABBITMQ_URL=amqp://rabbitmq
+    networks:
+      - uespi_network
+    depends_on:
+      - pedidos_db
+      - rabbitmq
+
+  notificacoes:
+    build: ./notificacoes
+    container_name: servico_notificacoes
+    # Não precisa expor porta HTTP, ele atua apenas como consumidor do RabbitMQ
+    environment:
+      - RABBITMQ_URL=amqp://rabbitmq
+    networks:
+      - uespi_network
+    depends_on:
+      - rabbitmq
+
+networks:
+  uespi_network:
+    driver: bridge

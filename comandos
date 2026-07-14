@@ -1,0 +1,12 @@
+PEDIDO: 
+
+    curl -X POST http://localhost:3000/pedido \
+    -H "Content-Type: application/json" \
+    -d '{"produto": "Notebook", "quantidade": 1}'
+
+
+
+terceiro teste
+docker exec -i estoque_db psql -U admin -d estoque -c "UPDATE produtos SET quantidade = 1 WHERE nome = 'Notebook';"
+
+curl -s -X POST http://localhost:3000/pedido -H "Content-Type: application/json" -d '{"produto": "Notebook", "quantidade": 1}' & curl -s -X POST http://localhost:3000/pedido -H "Content-Type: application/json" -d '{"produto": "Notebook", "quantidade": 1}' & wait

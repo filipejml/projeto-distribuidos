@@ -17,15 +17,39 @@ const pool = new Pool({
 
 // Banco de dados em memória temporário 
 const reservasAtivas = new Map();
+const FORMATO_RESERVA_ID = /^RES-\d+$/;
+
+function validarProdutoEQuantidade({ produto, quantidade }) {
+    if (typeof produto !== 'string' || produto.trim().length === 0) {
+        return "O campo 'produto' deve ser uma string não vazia.";
+    }
+
+    if (!Number.isInteger(quantidade) || quantidade <= 0) {
+        return "O campo 'quantidade' deve ser um número inteiro maior que zero.";
+    }
+
+    return null;
+}
+
+function reservaIdValida(reservaId) {
+    return typeof reservaId === 'string' && FORMATO_RESERVA_ID.test(reservaId);
+}
 
 app.post('/reservar', async (req, res) => {
     const { produto, quantidade } = req.body;
+    const erroValidacao = validarProdutoEQuantidade({ produto, quantidade });
+
+    if (erroValidacao) {
+        return res.status(400).json({ erro: erroValidacao });
+    }
+
+    const produtoNormalizado = produto.trim();
     
     // Inicia um cliente isolado
     const client = await pool.connect();
 
     try {
-        console.log(`[Estoque] Tentando reservar ${quantidade}x ${produto}...`);
+        console.log(`[Estoque] Tentando reservar ${quantidade}x ${produtoNormalizado}...`);
         
         // INÍCIO DA TRANSAÇÃO
         await client.query('BEGIN');
@@ -33,7 +57,7 @@ app.post('/reservar', async (req, res) => {
 
         const resQuery = await client.query(
             'SELECT id, quantidade FROM produtos WHERE nome = $1 FOR UPDATE',
-            [produto]
+            [produtoNormalizado]
         );
 
         if (resQuery.rows.length === 0) {
@@ -49,7 +73,7 @@ app.post('/reservar', async (req, res) => {
         // Atualiza o estoque
         await client.query(
             'UPDATE produtos SET quantidade = quantidade - $1 WHERE nome = $2',
-            [quantidade, produto]
+            [quantidade, produtoNormalizado]
         );
 
         // FIM 
@@ -57,7 +81,7 @@ app.post('/reservar', async (req, res) => {
 
         // Gera um ID de reserva 
         const reservaId = `RES-${Date.now()}`;
-        reservasAtivas.set(reservaId, { produto, quantidade });
+        reservasAtivas.set(reservaId, { produto: produtoNormalizado, quantidade });
 
         console.log(`[Estoque] Reserva ${reservaId} efetuada com sucesso. Restam: ${estoqueAtual - quantidade}`);
         
@@ -77,6 +101,12 @@ app.post('/reservar', async (req, res) => {
 // Rota de COMPENSAÇÃO 
 app.post('/cancelar-reserva', async (req, res) => {
     const { reservaId } = req.body;
+
+    if (!reservaIdValida(reservaId)) {
+        return res.status(400).json({
+            erro: "O campo 'reservaId' é obrigatório e deve seguir o formato RES-<números>."
+        });
+    }
 
     if (!reservasAtivas.has(reservaId)) {
         return res.status(404).json({ erro: "Reserva não encontrada." });

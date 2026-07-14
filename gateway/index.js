@@ -14,19 +14,38 @@ const apiClient = axios.create({
     timeout: 3000 
 });
 
+function validarPedido({ produto, quantidade }) {
+    if (typeof produto !== 'string' || produto.trim().length === 0) {
+        return "O campo 'produto' deve ser uma string não vazia.";
+    }
+
+    if (!Number.isInteger(quantidade) || quantidade <= 0) {
+        return "O campo 'quantidade' deve ser um número inteiro maior que zero.";
+    }
+
+    return null;
+}
+
 app.post('/pedido', async (req, res) => {
     const { produto, quantidade } = req.body;
+    const erroValidacao = validarPedido({ produto, quantidade });
+
+    if (erroValidacao) {
+        return res.status(400).json({ erro: erroValidacao });
+    }
+
+    const produtoNormalizado = produto.trim();
     let reservaId = null;
 
     try {
         // PASSO 1: Tenta reservar o produto no Serviço de Estoque
-        console.log(`[Gateway] Solicitando reserva de ${quantidade}x ${produto}...`);
-        const estoqueRes = await apiClient.post(`${ESTOQUE_URL}/reservar`, { produto, quantidade });
+        console.log(`[Gateway] Solicitando reserva de ${quantidade}x ${produtoNormalizado}...`);
+        const estoqueRes = await apiClient.post(`${ESTOQUE_URL}/reservar`, { produto: produtoNormalizado, quantidade });
         reservaId = estoqueRes.data.reservaId;
 
         // PASSO 2: Com o estoque reservado, chama o Serviço de Pedidos
         console.log(`[Gateway] Reserva ${reservaId} confirmada. Criando pedido no banco...`);
-        const pedidoRes = await apiClient.post(`${PEDIDOS_URL}/criar`, { produto, quantidade, reservaId });
+        const pedidoRes = await apiClient.post(`${PEDIDOS_URL}/criar`, { produto: produtoNormalizado, quantidade, reservaId });
 
         // PASSO 3: Sucesso absoluto
         return res.status(201).json({

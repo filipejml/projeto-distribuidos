@@ -7,6 +7,23 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3002;
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://localhost';
+const FORMATO_RESERVA_ID = /^RES-\d+$/;
+
+function validarCriacaoPedido({ produto, quantidade, reservaId }) {
+    if (typeof produto !== 'string' || produto.trim().length === 0) {
+        return "O campo 'produto' deve ser uma string não vazia.";
+    }
+
+    if (!Number.isInteger(quantidade) || quantidade <= 0) {
+        return "O campo 'quantidade' deve ser um número inteiro maior que zero.";
+    }
+
+    if (typeof reservaId !== 'string' || !FORMATO_RESERVA_ID.test(reservaId)) {
+        return "O campo 'reservaId' é obrigatório e deve seguir o formato RES-<números>.";
+    }
+
+    return null;
+}
 
 // Conexão com o banco isolado de Pedidos
 const pool = new Pool({
@@ -51,21 +68,28 @@ async function publicarEvento(evento, payload) {
 
 app.post('/criar', async (req, res) => {
     const { produto, quantidade, reservaId } = req.body;
+    const erroValidacao = validarCriacaoPedido({ produto, quantidade, reservaId });
+
+    if (erroValidacao) {
+        return res.status(400).json({ erro: erroValidacao });
+    }
+
+    const produtoNormalizado = produto.trim();
 
     try {
-        console.log(`[Pedidos] Gravando pedido do produto ${produto}...`);
+        console.log(`[Pedidos] Gravando pedido do produto ${produtoNormalizado}...`);
         
         // Grava no banco de dados próprio
         const result = await pool.query(
             'INSERT INTO compras (produto, quantidade, reserva_id) VALUES ($1, $2, $3) RETURNING id',
-            [produto, quantidade, reservaId]
+            [produtoNormalizado, quantidade, reservaId]
         );
         const pedidoId = result.rows[0].id;
 
         // Comunicação Indireta: Publica o evento pedido_criado
         await publicarEvento('pedido_criado', {
             pedidoId,
-            produto,
+            produto: produtoNormalizado,
             quantidade,
             reservaId
         });

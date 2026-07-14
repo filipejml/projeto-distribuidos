@@ -1,5 +1,6 @@
 const express = require('express');
 const { Pool } = require('pg');
+const { randomInt } = require('crypto');
 
 const app = express();
 app.use(express.json());
@@ -15,9 +16,19 @@ const pool = new Pool({
     port: 5432,
 });
 
-// Banco de dados em memória temporário 
-const reservasAtivas = new Map();
 const FORMATO_RESERVA_ID = /^RES-\d+$/;
+
+const schemaPronto = pool.query(`
+    CREATE TABLE IF NOT EXISTS reservas (
+        reserva_id VARCHAR(100) PRIMARY KEY,
+        produto VARCHAR(100) NOT NULL REFERENCES produtos(nome),
+        quantidade INT NOT NULL CHECK (quantidade > 0),
+        status VARCHAR(20) NOT NULL DEFAULT 'ATIVA'
+            CHECK (status IN ('ATIVA', 'CANCELADA')),
+        criada_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        cancelada_em TIMESTAMPTZ
+    )
+`);
 
 function validarProdutoEQuantidade({ produto, quantidade }) {
     if (typeof produto !== 'string' || produto.trim().length === 0) {
@@ -44,11 +55,12 @@ app.post('/reservar', async (req, res) => {
     }
 
     const produtoNormalizado = produto.trim();
-    
-    // Inicia um cliente isolado
-    const client = await pool.connect();
+    const reservaId = `RES-${Date.now()}${randomInt(100000, 1000000)}`;
+    let client;
 
     try {
+        await schemaPronto;
+        client = await pool.connect();
         console.log(`[Estoque] Tentando reservar ${quantidade}x ${produtoNormalizado}...`);
         
         // INÍCIO DA TRANSAÇÃO
@@ -76,25 +88,27 @@ app.post('/reservar', async (req, res) => {
             [quantidade, produtoNormalizado]
         );
 
-        // FIM 
-        await client.query('COMMIT');
+        // A reserva e a redução do estoque são persistidas atomicamente.
+        await client.query(
+            `INSERT INTO reservas (reserva_id, produto, quantidade, status)
+             VALUES ($1, $2, $3, 'ATIVA')`,
+            [reservaId, produtoNormalizado, quantidade]
+        );
 
-        // Gera um ID de reserva 
-        const reservaId = `RES-${Date.now()}`;
-        reservasAtivas.set(reservaId, { produto: produtoNormalizado, quantidade });
+        await client.query('COMMIT');
 
         console.log(`[Estoque] Reserva ${reservaId} efetuada com sucesso. Restam: ${estoqueAtual - quantidade}`);
         
         return res.status(200).json({ reservaId, status: "RESERVADO" });
 
     } catch (error) {
-        // Se algo der errado = rollback
-        await client.query('ROLLBACK');
+        if (client) {
+            await client.query('ROLLBACK').catch(() => {});
+        }
         console.error(`[Estoque] Falha na reserva: ${error.message}`);
         return res.status(400).json({ erro: error.message });
     } finally {
-        // Libera o cliente de volta para o pool
-        client.release();
+        client?.release();
     }
 });
 
@@ -108,25 +122,63 @@ app.post('/cancelar-reserva', async (req, res) => {
         });
     }
 
-    if (!reservasAtivas.has(reservaId)) {
-        return res.status(404).json({ erro: "Reserva não encontrada." });
-    }
+    let client;
 
-    const { produto, quantidade } = reservasAtivas.get(reservaId);
-    
     try {
-        // Devolve o produto ao estoque
-        await pool.query(
+        await schemaPronto;
+        client = await pool.connect();
+        await client.query('BEGIN');
+
+        // Serializa cancelamentos concorrentes da mesma reserva.
+        const result = await client.query(
+            `SELECT produto, quantidade, status
+             FROM reservas
+             WHERE reserva_id = $1
+             FOR UPDATE`,
+            [reservaId]
+        );
+
+        if (result.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ erro: "Reserva não encontrada." });
+        }
+
+        const { produto, quantidade, status } = result.rows[0];
+
+        if (status === 'CANCELADA') {
+            await client.query('COMMIT');
+            return res.status(200).json({
+                status: "CANCELADO_COM_SUCESSO",
+                jaEstavaCancelada: true
+            });
+        }
+
+        await client.query(
             'UPDATE produtos SET quantidade = quantidade + $1 WHERE nome = $2',
             [quantidade, produto]
         );
-        
-        reservasAtivas.delete(reservaId);
+
+        await client.query(
+            `UPDATE reservas
+             SET status = 'CANCELADA', cancelada_em = NOW()
+             WHERE reserva_id = $1`,
+            [reservaId]
+        );
+
+        await client.query('COMMIT');
         console.log(`[Estoque] Rollback da reserva ${reservaId} concluído. ${quantidade}x ${produto} devolvidos.`);
-        return res.status(200).json({ status: "CANCELADO_COM_SUCESSO" });
+        return res.status(200).json({
+            status: "CANCELADO_COM_SUCESSO",
+            jaEstavaCancelada: false
+        });
     } catch (error) {
+        if (client) {
+            await client.query('ROLLBACK').catch(() => {});
+        }
         console.error(`[Estoque] Erro ao devolver estoque: ${error.message}`);
         return res.status(500).json({ erro: "Falha crítica na compensação do estoque." });
+    } finally {
+        client?.release();
     }
 });
 

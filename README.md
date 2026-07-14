@@ -60,7 +60,7 @@ Se a reserva for concluída e a criação do pedido falhar, a Gateway chama a ro
 
 Mantém os produtos no PostgreSQL e disponibiliza operações para reservar ou cancelar uma reserva. A redução da quantidade ocorre em uma transação com bloqueio da linha do produto, impedindo que requisições concorrentes consumam a mesma unidade.
 
-As reservas ativas são mantidas temporariamente em memória para permitir a compensação.
+As reservas são persistidas com estado `ATIVA` ou `CANCELADA`. O cancelamento usa bloqueio de linha e é idempotente: chamadas repetidas retornam sucesso sem devolver o produto novamente ao estoque.
 
 ### Serviço de Pedidos
 
@@ -205,6 +205,5 @@ O painel do RabbitMQ fica disponível em `http://localhost:15672`.
 
 ## Observações
 
-- O controle de reservas e a idempotência das notificações são armazenados em memória e são perdidos quando os respectivos serviços reiniciam.
-- A confirmação da reserva não é persistida em uma tabela própria.
+- A idempotência das notificações ainda é armazenada em memória e é perdida quando o consumidor reinicia.
 - O projeto não possui suíte de testes automatizados; o arquivo `comandos` contém exemplos para testes manuais, inclusive de concorrência.

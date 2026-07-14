@@ -11,6 +11,7 @@ Aplicação acadêmica baseada em microsserviços para demonstrar comunicação 
 - Compensação da reserva quando a criação do pedido falha.
 - Timeout nas chamadas entre a API Gateway e os microsserviços.
 - Publicação assíncrona do evento `pedido_criado` no RabbitMQ.
+- Persistência atômica de pedidos e eventos com Transactional Outbox.
 - Consumo de eventos pelo serviço de notificações.
 - Confirmação de mensagens com ACK e fila durável.
 - Controle simples de idempotência para evitar notificações duplicadas durante a execução do consumidor.
@@ -33,7 +34,13 @@ API Gateway (porta 3000)
                                  |
                                  +--> PostgreSQL Pedidos (porta 5433 no host)
                                  |
-                                 +--> RabbitMQ (porta 5672)
+                                 +--> Tabela Outbox
+                                          |
+                                          v
+                                    Worker Outbox
+                                          |
+                                          v
+                                      RabbitMQ (porta 5672)
                                           |
                                           v
                                  Serviço de Notificações
@@ -57,7 +64,11 @@ As reservas ativas são mantidas temporariamente em memória para permitir a com
 
 ### Serviço de Pedidos
 
-Registra a compra em seu próprio PostgreSQL. Depois da persistência, publica o evento `pedido_criado` na fila `fila_notificacoes` do RabbitMQ.
+Registra a compra e o evento `pedido_criado` em uma única transação PostgreSQL. Assim, não existe pedido confirmado sem que o evento correspondente também esteja armazenado.
+
+### Worker Outbox
+
+Busca eventos ainda não publicados na tabela `outbox_events`, envia-os para a fila `fila_notificacoes` usando confirmação do RabbitMQ e marca cada evento como publicado. Quando o broker está indisponível, o evento permanece pendente e uma nova tentativa ocorre posteriormente.
 
 ### Serviço de Notificações
 
@@ -75,9 +86,10 @@ Atua exclusivamente como consumidor do RabbitMQ. Ao receber um evento de pedido 
 2. A Gateway solicita uma reserva ao serviço de estoque.
 3. O estoque bloqueia o produto, valida a quantidade, reduz o saldo e confirma a transação.
 4. A Gateway solicita ao serviço de pedidos que persista a compra.
-5. O serviço de pedidos grava a compra e publica um evento no RabbitMQ.
-6. O serviço de notificações consome o evento e simula o aviso ao cliente.
-7. Se a etapa de criação do pedido falhar após a reserva, a Gateway solicita a compensação do estoque.
+5. O serviço de pedidos grava a compra e o evento Outbox na mesma transação.
+6. O Worker Outbox publica o evento pendente no RabbitMQ e registra sua publicação.
+7. O serviço de notificações consome o evento e simula o aviso ao cliente.
+8. Se a etapa de criação do pedido falhar após a reserva, a Gateway solicita a compensação do estoque.
 
 ## Tecnologias
 
@@ -107,6 +119,7 @@ Atua exclusivamente como consumidor do RabbitMQ. Ao receber um evento de pedido 
 |   `-- package.json
 |-- pedidos/
 |   |-- index.js             # Persistência e publicação de eventos
+|   |-- outbox-worker.js     # Publicação confiável dos eventos pendentes
 |   |-- Dockerfile
 |   `-- package.json
 |-- notificacoes/

@@ -89,6 +89,22 @@ services:
       - uespi_network
     depends_on:
       - pedidos_db
+
+  outbox_worker:
+    build: ./pedidos
+    container_name: worker_outbox_pedidos
+    command: ["node", "outbox-worker.js"]
+    environment:
+      - DB_HOST=pedidos_db
+      - DB_USER=admin
+      - DB_PASSWORD=password
+      - DB_NAME=pedidos
+      - RABBITMQ_URL=amqp://rabbitmq
+      - OUTBOX_INTERVAL_MS=1000
+    networks:
+      - uespi_network
+    depends_on:
+      - pedidos_db
       - rabbitmq
 
   notificacoes:

@@ -170,11 +170,7 @@ As rotas `/reservar`, `/cancelar-reserva` e `/criar` são usadas internamente en
 
 ## Execução
 
-É necessário ter Docker e Docker Compose instalados.
-
-Antes de iniciar, confira o volume do banco de estoque em `docker-compose.yaml`: o Compose referencia `estoque/init.sql`, enquanto o script SQL existente no projeto se chama `estoque/ini.sql`.
-
-Após ajustar essa referência, execute:
+É necessário ter Docker e Docker Compose instalados. Para construir e iniciar a aplicação, execute:
 
 ```bash
 docker compose up --build

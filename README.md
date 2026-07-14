@@ -169,6 +169,16 @@ Resposta de sucesso:
 
 As rotas `/reservar`, `/cancelar-reserva` e `/criar` são usadas internamente entre os microsserviços.
 
+### Respostas de erro
+
+| Status | Significado |
+|---:|---|
+| 400 | Corpo da requisição inválido |
+| 404 | Produto não encontrado |
+| 409 | Estoque insuficiente ou conflito de processamento |
+| 502 | Resposta inválida ou falha de um serviço interno |
+| 503 | Serviço interno indisponível ou timeout |
+
 ## Portas
 
 | Componente | Porta no host |

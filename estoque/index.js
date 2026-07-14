@@ -73,13 +73,17 @@ app.post('/reservar', async (req, res) => {
         );
 
         if (resQuery.rows.length === 0) {
-            throw new Error("Produto não encontrado.");
+            const error = new Error("Produto não encontrado.");
+            error.statusHttp = 404;
+            throw error;
         }
 
         const estoqueAtual = resQuery.rows[0].quantidade;
 
         if (estoqueAtual < quantidade) {
-            throw new Error("Estoque insuficiente.");
+            const error = new Error("Estoque insuficiente.");
+            error.statusHttp = 409;
+            throw error;
         }
 
         // Atualiza o estoque
@@ -106,7 +110,9 @@ app.post('/reservar', async (req, res) => {
             await client.query('ROLLBACK').catch(() => {});
         }
         console.error(`[Estoque] Falha na reserva: ${error.message}`);
-        return res.status(400).json({ erro: error.message });
+        return res.status(error.statusHttp || 500).json({
+            erro: error.statusHttp ? error.message : "Falha ao processar a reserva."
+        });
     } finally {
         client?.release();
     }
